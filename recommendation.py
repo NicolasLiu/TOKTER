@@ -1,15 +1,38 @@
 
 import networkx as nx
+import itertools
 import numpy as np
 import pickle
 import hanlp
 import os
-
+from nltk.stem import WordNetLemmatizer
+import nltk
+nltk.download('wordnet')
+nltk.download('averaged_perceptron_tagger')
 
 
 terms = set()
 cache_paths = {}
 test_steps_in_kg = set()
+
+def lemmatize(word, tag):
+    ''' Change a word to its general form; note that this process is not required in Chinese.
+
+    :param word: the input word
+    :param tag: lexical property
+    :return: the general form
+    '''
+    lemmatizer = WordNetLemmatizer()
+    if tag.startswith('NN'):
+        return lemmatizer.lemmatize(word, 'n')
+    elif tag.startswith('VB'):
+        return lemmatizer.lemmatize(word, 'v')
+    elif tag.startswith('JJ'):
+        return lemmatizer.lemmatize(word, 'a')
+    elif tag.startswith('R'):
+        return lemmatizer.lemmatize(word, 'r')
+    else:
+        return word
 
 def get_terms():
     if len(terms) > 0:
@@ -18,7 +41,11 @@ def get_terms():
         line = file.readline()
         while(line):
             if line.strip() != '':
-                terms.add(line.strip())
+                tmps = line.strip().split(" ")
+                if len(tmps) > 1:
+                    terms.add(tuple(tmps))
+                else:
+                    terms.add(line.strip())
             line = file.readline()
 
 # init NLP tool
@@ -54,8 +81,8 @@ defined_meta_paths = {
     'q-d-d-tf': ['query', 'domain', 'domain', 'test function'],
     'q-d-fp-tf': ['query', 'domain', 'function param', 'test function'],
     'q-d-d-fp-tf': ['query', 'domain', 'domain', 'function param', 'test function'],
-    'q-d-ts': ['query', 'domain', 'test step'],
-    'q-d-d-ts': ['query', 'domain', 'domain', 'test step']
+    'q-d-ts-tf': ['query', 'domain', 'test step', 'test function'],
+    'q-d-d-ts-tf': ['query', 'domain', 'domain', 'test step','test function']
 }
 
 
@@ -152,7 +179,9 @@ def rec_test_functions(graph, query, functions, topK=10):
     graph.nodes[query]['type'] = 'query'
 
     r = HanLP(query, tasks='tok')
-    for word in r['tok/fine']:
+    words = nltk.pos_tag(r['tok/fine'])
+    for word in words:
+        word = lemmatize(word[0], word[1])
         word = word.strip()
         if graph.has_node(word):
             graph.add_edge(query, word)
@@ -202,34 +231,22 @@ def build_cache(graph, defined_meta_paths, filename = 'path_cache'):
     for node in graph.nodes():
         if graph.nodes[node]['type'] == 'test function':
             function_name = node
-            r = nx.single_source_shortest_path(graph, source=function_name, cutoff=cut)
-            for k,v in r.items():
-                tmps2 = []
-                for n2 in v:
-                    tmp2 = defined_abbr[graph.nodes[n2]['type']]
-                    tmps2.append(tmp2)
-                pattern = '-'.join(tmps2)
-                if pattern in reverse_patterns:
-                    if k not in cache:
-                        cache[k] = {}
-                    if function_name not in cache[k]:
-                        cache[k][function_name] = []
-                    cache[k][function_name].append(v[::-1])
+            for t in graph.nodes():
+                r = nx.all_simple_paths(graph, source=function_name, target=t, cutoff=cut)
+                for v in r:
+                    k = v[-1]
+                    tmps2 = []
+                    for n2 in v:
+                        tmp2 = defined_abbr[graph.nodes[n2]['type']]
+                        tmps2.append(tmp2)
+                    pattern = '-'.join(tmps2)
+                    if pattern in reverse_patterns:
+                        if k not in cache:
+                            cache[k] = {}
+                        if function_name not in cache[k]:
+                            cache[k][function_name] = []
+                        cache[k][function_name].append(v[::-1])
 
-        if graph.nodes[node]['type'] == 'test step':
-            r = nx.single_source_shortest_path(graph, source=node, cutoff=cut)
-            for k,v in r.items():
-                tmps2 = []
-                for n2 in v:
-                    tmp2 = defined_abbr[graph.nodes[n2]['type']]
-                    tmps2.append(tmp2)
-                pattern = '-'.join(tmps2)
-                if pattern in reverse_patterns:
-                    if k not in cache:
-                        cache[k] = {}
-                    if node not in cache[k]:
-                        cache[k][node] = []
-                    cache[k][node].append(v[::-1])
 
 
     with open(filename, 'wb') as f:
@@ -243,13 +260,23 @@ if __name__ == '__main__':
     with open("kg.gpickle", 'rb') as f:
         G = pickle.load(f)
     # function_list is the list of test functions
-    function_list = ['test function 1', 'test function 2']
+    function_list = ['create_sdh', 'create_eth', 'create_eth_path', 'query_sdh']
     # create a path cache file before recommending test functions
     build_cache(G, defined_meta_paths)
     # load the path cache
     with open("path_cache", 'rb') as f:
         cache_paths = pickle.load(f)
     # recommend test functions
-    rec_test_functions(G, 'query', function_list, 10)
+    queries = [
+        'create an EPL service', 
+        'create an SDH service', 
+        'confirm whether the service was created successfully',
+        'precompute an Ethernet service'
+    ]
+    for query in queries:
+        print('query: ' + query)
+        print(rec_test_functions(G, query, function_list, 10))
+        print('------------')
+        
 
    

@@ -1,0 +1,8 @@
+EPL service
+Ethernet service
+Synchronous Digital Hierarchy
+SDH
+service
+create
+confirm
+precompute
